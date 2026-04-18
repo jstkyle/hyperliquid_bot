@@ -95,7 +95,7 @@ class PaperExecutionEngine:
             size=str(fill_size),
             price=str(fill_price),
             reduce_only=intent.is_reduce_only,
-            new_position=str(self._paper_positions.get(coin, {!r: "none"})),
+            new_position=str(self._paper_positions.get(coin)),
         )
 
         return OrderResult(
