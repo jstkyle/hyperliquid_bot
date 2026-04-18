@@ -1,0 +1,50 @@
+# Hyperliquid Copy Trading Bot Configuration
+# ============================================
+
+# Each leader-follower pair defines one copy trading relationship.
+# The bot supports multiple pairs running concurrently.
+pairs:
+  - name: "leader_alpha"
+    leader_address: "0x0c2cb7193e1fa533c4a2b5ed45782962a0ac6c3f"
+    follower_address: ""  # Set via env: HL_PAIR_0_FOLLOWER_ADDRESS
+    agent_private_key_env: "HL_PAIR_0_AGENT_PRIVATE_KEY"
+
+# Scaling parameters
+scaling:
+  multiplier: 1.0              # Additional scaling factor on top of equity ratio
+  min_order_notional: 11.0     # USD — above Hyperliquid's ~10 USDC minimum
+  drift_threshold_pct: 0.02    # 2% — minimum drift to trigger reconciliation order
+
+# Risk controls
+risk:
+  symbol_whitelist: "ALL"      # List of coins e.g. ["BTC", "ETH", "SOL"] or "ALL"
+  max_position_usd: 50000.0   # Per-symbol notional cap
+  max_total_exposure_usd: 200000.0  # Sum of all abs(position_notional)
+  max_leverage: 20             # Will not exceed this even if leader does
+  slippage_tolerance_bps: 50   # 0.5% — aggressive price offset for IOC orders
+  max_consecutive_failures: 5  # Pause after this many consecutive execution failures
+  max_open_orders: 20
+  kill_switch:
+    loss_usd: -5000.0          # Absolute session loss to trigger kill switch
+    loss_pct: -0.10            # 10% of starting equity
+
+# Polling intervals
+polling:
+  reconciliation_interval_s: 30
+  equity_refresh_interval_s: 10
+  metadata_refresh_interval_s: 300
+
+# WebSocket configuration
+websocket:
+  reconnect_delay_s: 1
+  max_reconnect_delay_s: 60
+  heartbeat_interval_s: 15
+
+# Alerting
+alerting:
+  discord_webhook_url_env: "DISCORD_WEBHOOK_URL"
+
+# Operating mode
+mode: "paper"       # "paper" or "live"
+network: "mainnet"  # "mainnet" or "testnet"
+log_level: "INFO"   # DEBUG, INFO, WARNING, ERROR, CRITICAL
