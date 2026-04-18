@@ -115,7 +115,33 @@ async def run_pair(
             )
 
             if config.is_paper and isinstance(execution, PaperExecutionEngine):
-                execution.set_initial_equity(follower_state.account_value)
+                # Use real equity if available, otherwise simulated paper equity
+                equity = follower_state.account_value
+                if equity <= 0:
+                    equity = config.scaling.paper_equity
+                    logger.info(
+                        "Using simulated paper equity (follower has $0)",
+                        pair=pair_name,
+                        paper_equity=str(equity),
+                    )
+                execution.set_initial_equity(equity)
+        elif config.is_paper and isinstance(execution, PaperExecutionEngine):
+            # No follower address set — use simulated equity
+            from copybot.state.models import AccountState
+            from decimal import Decimal
+            paper_equity = config.scaling.paper_equity
+            follower_state = AccountState(
+                address="paper_wallet",
+                account_value=paper_equity,
+                timestamp=0.0,
+            )
+            store.set_follower_state(pair_name, follower_state)
+            execution.set_initial_equity(paper_equity)
+            logger.info(
+                "Paper mode: no follower address, using simulated equity",
+                pair=pair_name,
+                paper_equity=str(paper_equity),
+            )
 
     except Exception as e:
         logger.error("Failed to fetch initial state", pair=pair_name, error=str(e))

@@ -26,6 +26,7 @@ class ScalingConfig:
     multiplier: Decimal = Decimal("1.0")
     min_order_notional: Decimal = Decimal("11.0")
     drift_threshold_pct: Decimal = Decimal("0.02")
+    paper_equity: Decimal = Decimal("10000.0")  # Simulated starting equity for paper mode
 
 
 @dataclass
@@ -150,6 +151,7 @@ def load_config(config_path: str | Path | None = None) -> BotConfig:
         multiplier=Decimal(str(scaling_raw.get("multiplier", "1.0"))),
         min_order_notional=Decimal(str(scaling_raw.get("min_order_notional", "11.0"))),
         drift_threshold_pct=Decimal(str(scaling_raw.get("drift_threshold_pct", "0.02"))),
+        paper_equity=Decimal(str(scaling_raw.get("paper_equity", "10000.0"))),
     )
 
     # --- Risk ---

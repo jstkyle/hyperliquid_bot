@@ -109,9 +109,24 @@ class ReconciliationLoop:
         leader_state = await self.poller.fetch_clearinghouse_state(
             self.pair_config.leader_address
         )
-        follower_state = await self.poller.fetch_clearinghouse_state(
-            self.pair_config.follower_address
-        )
+
+        if self.pair_config.follower_address:
+            follower_state = await self.poller.fetch_clearinghouse_state(
+                self.pair_config.follower_address
+            )
+        else:
+            # Paper mode without follower address — use stored state
+            follower_state = self.store.get_follower_state(pair_name)
+            if follower_state is None:
+                from copybot.state.models import AccountState
+                follower_state = AccountState(
+                    address="paper_wallet",
+                    account_value=self.config.scaling.paper_equity,
+                )
+
+        # In paper mode, ensure follower equity is never $0 (use paper_equity)
+        if self.config.is_paper and follower_state.account_value <= 0:
+            follower_state.account_value = self.config.scaling.paper_equity
 
         # 3. Update state store
         self.store.set_leader_state(pair_name, leader_state)
