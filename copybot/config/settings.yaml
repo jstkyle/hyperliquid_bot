@@ -41,9 +41,16 @@ websocket:
   max_reconnect_delay_s: 60
   heartbeat_interval_s: 15
 
-# Alerting
+# Alerting (webhook for notifications)
 alerting:
   discord_webhook_url_env: "DISCORD_WEBHOOK_URL"
+
+# Discord bot (for command control interface)
+discord:
+  bot_token_env: "DISCORD_BOT_TOKEN"
+  command_channel: ""             # Channel name to restrict commands to (empty = any channel)
+  authorized_user_ids:
+    - 811339626496131119           # jstkyle
 
 # Operating mode
 mode: "paper"       # "paper" or "live"

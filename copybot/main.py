@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 
 from copybot.config.loader import BotConfig, PairConfig, load_config
+from copybot.controller import BotController
+from copybot.discord_bot import start_discord_bot
 from copybot.engine.decision import DecisionEngine
 from copybot.engine.execution import ExecutionEngine
 from copybot.engine.paper_trader import PaperExecutionEngine
@@ -28,6 +30,7 @@ async def run_pair(
     metadata: MetadataCache,
     store: StateStore,
     alerter: DiscordAlerter,
+    controller: BotController | None = None,
 ) -> None:
     """Run all components for a single leader-follower pair.
 
@@ -85,7 +88,19 @@ async def run_pair(
         store=store,
         leader_event=leader_event,
         alerter=alerter,
+        controller=controller,
     )
+
+    # Register with controller for Discord commands
+    if controller:
+        controller.register_pair(
+            pair_name=pair_name,
+            risk_controller=risk,
+            execution_engine=execution,
+            recon_loop=recon,
+            ws_listener=ws_listener,
+            rest_poller=poller,
+        )
 
     # --- Fetch initial state ---
     logger.info(
@@ -211,6 +226,11 @@ async def async_main(config: BotConfig) -> None:
     )
     await alerter.alert_startup(config.mode, len(config.pairs))
 
+    # --- Bot Controller (for Discord commands) ---
+    controller = BotController()
+    controller.set_config(config)
+    controller.set_store(store)
+
     # --- Validate pair configs ---
     valid_pairs = []
     for pair in config.pairs:
@@ -232,11 +252,28 @@ async def async_main(config: BotConfig) -> None:
     # --- Run all pairs concurrently ---
     pair_tasks = [
         asyncio.create_task(
-            run_pair(config, pair, metadata, store, alerter),
+            run_pair(config, pair, metadata, store, alerter, controller),
             name=f"pair_{pair.name}",
         )
         for pair in valid_pairs
     ]
+
+    # --- Start Discord bot (if token configured) ---
+    discord_tasks = []
+    if config.discord.bot_token:
+        discord_task = asyncio.create_task(
+            start_discord_bot(
+                token=config.discord.bot_token,
+                controller=controller,
+                authorized_users=config.discord.authorized_user_ids,
+                command_channel=config.discord.command_channel or None,
+            ),
+            name="discord_bot",
+        )
+        discord_tasks.append(discord_task)
+        logger.info("Discord bot starting", authorized_users=config.discord.authorized_user_ids)
+    else:
+        logger.warning("Discord bot not started — DISCORD_BOT_TOKEN not set")
 
     # Graceful shutdown handler
     shutdown_event = asyncio.Event()
@@ -251,7 +288,7 @@ async def async_main(config: BotConfig) -> None:
 
     # Wait for shutdown or task failure
     shutdown_task = asyncio.create_task(shutdown_event.wait())
-    all_tasks = pair_tasks + [shutdown_task]
+    all_tasks = pair_tasks + discord_tasks + [shutdown_task]
     done, pending = await asyncio.wait(all_tasks, return_when=asyncio.FIRST_COMPLETED)
 
     # --- Cleanup ---

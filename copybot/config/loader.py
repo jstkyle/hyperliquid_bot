@@ -72,6 +72,15 @@ class AlertingConfig:
 
 
 @dataclass
+class DiscordBotConfig:
+    """Configuration for the Discord command bot."""
+
+    bot_token: str = ""
+    command_channel: str = ""
+    authorized_user_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
 class BotConfig:
     """Top-level configuration for the copy trading bot."""
 
@@ -81,6 +90,7 @@ class BotConfig:
     polling: PollingConfig = field(default_factory=PollingConfig)
     websocket: WebSocketConfig = field(default_factory=WebSocketConfig)
     alerting: AlertingConfig = field(default_factory=AlertingConfig)
+    discord: DiscordBotConfig = field(default_factory=DiscordBotConfig)
     mode: str = "paper"
     network: str = "mainnet"
     log_level: str = "INFO"
@@ -199,6 +209,16 @@ def load_config(config_path: str | Path | None = None) -> BotConfig:
     discord_url = os.environ.get(discord_env, "")
     alerting = AlertingConfig(discord_webhook_url=discord_url)
 
+    # --- Discord Bot ---
+    discord_raw = raw.get("discord", {})
+    bot_token_env = discord_raw.get("bot_token_env", "DISCORD_BOT_TOKEN")
+    bot_token = os.environ.get(bot_token_env, "")
+    discord_bot = DiscordBotConfig(
+        bot_token=bot_token,
+        command_channel=discord_raw.get("command_channel", ""),
+        authorized_user_ids=[int(uid) for uid in discord_raw.get("authorized_user_ids", [])],
+    )
+
     return BotConfig(
         pairs=pairs,
         scaling=scaling,
@@ -206,6 +226,7 @@ def load_config(config_path: str | Path | None = None) -> BotConfig:
         polling=polling,
         websocket=websocket,
         alerting=alerting,
+        discord=discord_bot,
         mode=raw.get("mode", "paper"),
         network=raw.get("network", "mainnet"),
         log_level=raw.get("log_level", "INFO"),

@@ -15,6 +15,10 @@ from copybot.state.store import StateStore
 from copybot.utils.alerting import DiscordAlerter
 from copybot.utils.logging import get_logger
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from copybot.controller import BotController
+
 logger = get_logger(__name__)
 
 
@@ -43,6 +47,7 @@ class ReconciliationLoop:
         store: StateStore,
         leader_event: asyncio.Event,
         alerter: DiscordAlerter | None = None,
+        controller: BotController | None = None,
     ):
         self.config = config
         self.pair_config = pair_config
@@ -54,6 +59,7 @@ class ReconciliationLoop:
         self.store = store
         self.leader_event = leader_event
         self.alerter = alerter
+        self.controller = controller
         self._running = False
 
     async def start(self) -> None:
@@ -88,6 +94,10 @@ class ReconciliationLoop:
 
                 await self._run_cycle(triggered_by, force)
 
+                # Update controller state
+                if self.controller:
+                    self.controller.update_recon_time(self.pair_config.name)
+
             except Exception as e:
                 logger.error(
                     "Reconciliation cycle error",
@@ -104,6 +114,11 @@ class ReconciliationLoop:
     async def _run_cycle(self, triggered_by: str, force: bool) -> None:
         """Execute a single reconciliation cycle."""
         pair_name = self.pair_config.name
+
+        # Check if paused via controller
+        if self.controller and self.controller.is_paused(pair_name):
+            logger.debug("Reconciliation skipped (paused)", pair=pair_name)
+            return
 
         # 1. Refresh metadata if stale
         await self.metadata.ensure_fresh()
