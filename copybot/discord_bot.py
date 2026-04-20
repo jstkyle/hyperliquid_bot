@@ -1,4 +1,4 @@
-"""Discord bot — command interface for controlling the copy trading bot."""
+"""Discord bot — slash command interface for controlling the copy trading bot."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 import discord
-from discord.ext import commands
+from discord import app_commands
 
 from copybot.controller import BotController
 from copybot.utils.logging import get_logger
@@ -16,7 +16,7 @@ from copybot.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-class CopyBotDiscord(commands.Bot):
+class CopyBotDiscord(discord.Client):
     """Discord bot for controlling the Hyperliquid copy trading bot."""
 
     def __init__(
@@ -28,36 +28,43 @@ class CopyBotDiscord(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
 
-        super().__init__(command_prefix="!", intents=intents, help_command=None)
+        super().__init__(intents=intents)
 
         self.controller = controller
         self.authorized_users = set(authorized_users)
         self.command_channel = command_channel
+        self.tree = app_commands.CommandTree(self)
+
+        # Pending kill confirmations: user_id → timestamp
+        self._pending_kills: dict[int, float] = {}
 
         # Register commands
         self._register_commands()
 
-    def _is_authorized(self, ctx: commands.Context) -> bool:
-        """Check if the user is authorized to run commands."""
-        return ctx.author.id in self.authorized_users
+    def _check_auth(self, interaction: discord.Interaction) -> bool:
+        """Check if the user is authorized."""
+        return interaction.user.id in self.authorized_users
 
-    def _check_channel(self, ctx: commands.Context) -> bool:
+    def _check_channel(self, interaction: discord.Interaction) -> bool:
         """Check if the command is in the correct channel."""
         if not self.command_channel:
             return True
-        return ctx.channel.name == self.command_channel
+        return interaction.channel.name == self.command_channel
 
     async def on_ready(self):
         logger.info("Discord bot connected", user=str(self.user), guilds=len(self.guilds))
+        # Sync slash commands with Discord
+        await self.tree.sync()
+        logger.info("Slash commands synced")
 
     def _register_commands(self):
-        """Register all bot commands."""
+        """Register all slash commands."""
 
-        @self.command(name="status")
-        async def cmd_status(ctx: commands.Context):
-            """Show bot status and uptime."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- STATUS ---
+        @self.tree.command(name="status", description="Show bot status, uptime, and connection info")
+        async def cmd_status(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             mode_emoji = "📝" if self.controller.mode == "paper" else "💰"
             embed = discord.Embed(
@@ -92,13 +99,13 @@ class CopyBotDiscord(commands.Bot):
                     inline=False,
                 )
 
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
 
-        @self.command(name="balance")
-        async def cmd_balance(ctx: commands.Context):
-            """Show leader and follower equity."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- BALANCE ---
+        @self.tree.command(name="balance", description="Show leader and follower equity")
+        async def cmd_balance(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             embed = discord.Embed(
                 title="💰 Balance",
@@ -124,21 +131,18 @@ class CopyBotDiscord(commands.Bot):
                     inline=False,
                 )
 
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
 
-        @self.command(name="positions")
-        async def cmd_positions(ctx: commands.Context):
-            """Show all open positions side by side."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- POSITIONS ---
+        @self.tree.command(name="positions", description="Show all open positions side by side")
+        async def cmd_positions(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
+            embeds = []
             for pair_name in self.controller.pair_names:
                 leader = self.controller.get_leader_state(pair_name)
                 follower = self.controller.get_follower_state(pair_name)
-
-                if not leader and not follower:
-                    await ctx.send(f"📊 **{pair_name}**: No state available")
-                    continue
 
                 all_coins = set()
                 if leader:
@@ -147,7 +151,11 @@ class CopyBotDiscord(commands.Bot):
                     all_coins |= set(follower.positions.keys())
 
                 if not all_coins:
-                    await ctx.send(f"📊 **{pair_name}**: No open positions")
+                    embeds.append(discord.Embed(
+                        title=f"📊 {pair_name}",
+                        description="No open positions",
+                        color=0x95A5A6,
+                    ))
                     continue
 
                 embed = discord.Embed(
@@ -170,13 +178,15 @@ class CopyBotDiscord(commands.Bot):
                         inline=True,
                     )
 
-                await ctx.send(embed=embed)
+                embeds.append(embed)
 
-        @self.command(name="pnl")
-        async def cmd_pnl(ctx: commands.Context):
-            """Show session PnL."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+            await interaction.response.send_message(embeds=embeds[:10])  # Discord max 10 embeds
+
+        # --- PNL ---
+        @self.tree.command(name="pnl", description="Show session profit/loss")
+        async def cmd_pnl(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             embed = discord.Embed(
                 title="📊 Session PnL",
@@ -192,31 +202,32 @@ class CopyBotDiscord(commands.Bot):
 
                 pnl_pct = (pnl / start_eq * 100) if start_eq > 0 else Decimal("0")
                 pnl_emoji = "📈" if pnl >= 0 else "📉"
-                pnl_color = "+" if pnl >= 0 else ""
+                pnl_sign = "+" if pnl >= 0 else ""
 
                 embed.add_field(
                     name=f"{pnl_emoji} {pair_name}",
                     value=(
-                        f"**PnL:** {pnl_color}${pnl:,.2f} ({pnl_color}{pnl_pct:.2f}%)\n"
+                        f"**PnL:** {pnl_sign}${pnl:,.2f} ({pnl_sign}{pnl_pct:.2f}%)\n"
                         f"**Starting Equity:** ${start_eq:,.2f}\n"
                         f"**Current Equity:** ${current_eq:,.2f}"
                     ),
                     inline=False,
                 )
 
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
 
-        @self.command(name="trades")
-        async def cmd_trades(ctx: commands.Context, count: int = 10):
-            """Show recent trades. Usage: !trades [count]"""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- TRADES ---
+        @self.tree.command(name="trades", description="Show recent trade history")
+        @app_commands.describe(count="Number of trades to show (max 25)")
+        async def cmd_trades(interaction: discord.Interaction, count: int = 10):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
-            count = min(count, 25)  # Cap at 25
+            count = min(count, 25)
             trades = await self.controller.get_recent_trades(limit=count)
 
             if not trades:
-                return await ctx.send("📊 No trades recorded yet.")
+                return await interaction.response.send_message("📊 No trades recorded yet.")
 
             embed = discord.Embed(
                 title=f"📋 Last {len(trades)} Trades",
@@ -235,65 +246,68 @@ class CopyBotDiscord(commands.Bot):
                     inline=False,
                 )
 
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
 
-        @self.command(name="pause")
-        async def cmd_pause(ctx: commands.Context):
-            """Pause all trading."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- PAUSE ---
+        @self.tree.command(name="pause", description="Pause all trading (keeps monitoring)")
+        async def cmd_pause(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             result = self.controller.pause()
-            await ctx.send(f"⏸️ {result}")
+            await interaction.response.send_message(f"⏸️ {result}")
 
-        @self.command(name="resume")
-        async def cmd_resume(ctx: commands.Context):
-            """Resume all trading."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- RESUME ---
+        @self.tree.command(name="resume", description="Resume trading after pause")
+        async def cmd_resume(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             result = self.controller.resume()
-            await ctx.send(f"▶️ {result}")
+            await interaction.response.send_message(f"▶️ {result}")
 
-        @self.command(name="kill")
-        async def cmd_kill(ctx: commands.Context):
-            """Activate kill switch — closes all positions."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- KILL ---
+        @self.tree.command(name="kill", description="⚠️ Emergency: close ALL positions immediately")
+        async def cmd_kill(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
-            # Confirmation
-            await ctx.send("⚠️ **Are you sure?** This will close ALL positions. Type `!confirm_kill` within 30 seconds.")
+            # Store pending confirmation
+            self._pending_kills[interaction.user.id] = time.time()
 
-            def check(m):
-                return m.author == ctx.author and m.content == "!confirm_kill"
+            await interaction.response.send_message(
+                "⚠️ **Are you sure?** This will close ALL positions.\n"
+                "Use `/confirm_kill` within 30 seconds to confirm."
+            )
 
-            try:
-                await self.wait_for("message", check=check, timeout=30)
-            except asyncio.TimeoutError:
-                return await ctx.send("⏰ Kill switch cancelled (timed out).")
+        # --- CONFIRM KILL ---
+        @self.tree.command(name="confirm_kill", description="Confirm kill switch activation")
+        async def cmd_confirm_kill(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
+            pending_time = self._pending_kills.pop(interaction.user.id, None)
+            if pending_time is None or (time.time() - pending_time) > 30:
+                return await interaction.response.send_message("⏰ No pending kill or timed out. Use `/kill` first.")
+
+            await interaction.response.defer()
             result = await self.controller.kill()
-            await ctx.send(result)
+            await interaction.followup.send(result)
 
-        @self.command(name="confirm_kill")
-        async def cmd_confirm_kill(ctx: commands.Context):
-            """Hidden — handled by kill command."""
-            pass
-
-        @self.command(name="reset")
-        async def cmd_reset(ctx: commands.Context):
-            """Reset kill switch after manual review."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- RESET ---
+        @self.tree.command(name="reset", description="Reset kill switch after manual review")
+        async def cmd_reset(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             result = self.controller.reset_kill()
-            await ctx.send(result)
+            await interaction.response.send_message(result)
 
-        @self.command(name="config")
-        async def cmd_config(ctx: commands.Context):
-            """Show current configuration."""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
+        # --- CONFIG ---
+        @self.tree.command(name="config", description="Show current bot configuration")
+        async def cmd_config(interaction: discord.Interaction):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             summary = self.controller.get_config_summary()
 
@@ -306,40 +320,34 @@ class CopyBotDiscord(commands.Bot):
             for key, value in summary.items():
                 embed.add_field(name=key, value=value, inline=True)
 
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
 
-        @self.command(name="set")
-        async def cmd_set(ctx: commands.Context, setting: str = "", value: str = ""):
-            """Change a config setting. Usage: !set multiplier 0.5"""
-            if not self._is_authorized(ctx) or not self._check_channel(ctx):
-                return await ctx.send("⛔ Not authorized or wrong channel.")
-
-            if not setting or not value:
-                return await ctx.send(
-                    "Usage: `!set <setting> <value>`\n"
-                    "Available: `multiplier`, `max_position`"
-                )
-
-            try:
-                float_val = float(value)
-            except ValueError:
-                return await ctx.send(f"❌ Invalid number: {value}")
+        # --- SET ---
+        @self.tree.command(name="set", description="Change a config setting")
+        @app_commands.describe(
+            setting="Setting to change",
+            value="New value"
+        )
+        @app_commands.choices(setting=[
+            app_commands.Choice(name="multiplier", value="multiplier"),
+            app_commands.Choice(name="max_position", value="max_position"),
+        ])
+        async def cmd_set(interaction: discord.Interaction, setting: str, value: float):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
 
             if setting == "multiplier":
-                result = self.controller.set_multiplier(float_val)
+                result = self.controller.set_multiplier(value)
             elif setting == "max_position":
-                result = self.controller.set_max_position(float_val)
+                result = self.controller.set_max_position(value)
             else:
-                return await ctx.send(f"❌ Unknown setting: `{setting}`")
+                return await interaction.response.send_message(f"❌ Unknown setting: `{setting}`")
 
-            await ctx.send(f"✅ {result}")
+            await interaction.response.send_message(f"✅ {result}")
 
-        @self.command(name="help")
-        async def cmd_help(ctx: commands.Context):
-            """Show all available commands."""
-            if not self._check_channel(ctx):
-                return
-
+        # --- HELP ---
+        @self.tree.command(name="help", description="Show all available commands")
+        async def cmd_help(interaction: discord.Interaction):
             embed = discord.Embed(
                 title="🤖 HL CopyBot — Commands",
                 color=0x3498DB,
@@ -347,22 +355,21 @@ class CopyBotDiscord(commands.Bot):
 
             commands_list = {
                 "📊 Monitoring": (
-                    "`!status` — Bot status, uptime, WS connection\n"
-                    "`!balance` — Leader & follower equity\n"
-                    "`!positions` — Open positions side by side\n"
-                    "`!pnl` — Session profit/loss\n"
-                    "`!trades [N]` — Last N trades"
+                    "`/status` — Bot status, uptime, WS connection\n"
+                    "`/balance` — Leader & follower equity\n"
+                    "`/positions` — Open positions side by side\n"
+                    "`/pnl` — Session profit/loss\n"
+                    "`/trades` — Recent trade history"
                 ),
                 "🎮 Control": (
-                    "`!pause` — Pause all trading\n"
-                    "`!resume` — Resume trading\n"
-                    "`!kill` — Emergency: close all positions\n"
-                    "`!reset` — Reset kill switch"
+                    "`/pause` — Pause all trading\n"
+                    "`/resume` — Resume trading\n"
+                    "`/kill` — Emergency: close all positions\n"
+                    "`/reset` — Reset kill switch"
                 ),
                 "⚙️ Configuration": (
-                    "`!config` — View current settings\n"
-                    "`!set multiplier 0.5` — Change scaling\n"
-                    "`!set max_position 25000` — Position cap"
+                    "`/config` — View current settings\n"
+                    "`/set` — Change multiplier or position cap"
                 ),
             }
 
@@ -370,7 +377,7 @@ class CopyBotDiscord(commands.Bot):
                 embed.add_field(name=section, value=cmds, inline=False)
 
             embed.set_footer(text="Only authorized users can run control commands.")
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
 
 
 async def start_discord_bot(
