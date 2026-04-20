@@ -46,6 +46,21 @@ class PaperExecutionEngine:
             equity=str(equity),
         )
 
+    def seed_positions(self, positions: dict[str, PositionInfo]) -> None:
+        """Pre-seed virtual positions from the leader's current state.
+
+        Called at startup so the bot treats existing leader positions as
+        the baseline and only copies NEW changes going forward.
+        """
+        self._paper_positions = dict(positions)
+        coins = list(positions.keys())
+        logger.info(
+            "Paper trader seeded with leader's existing positions (baseline)",
+            pair=self.pair_name,
+            positions=len(positions),
+            coins=coins,
+        )
+
     async def initialize(self) -> None:
         """No-op for paper trading (no SDK initialization needed)."""
         logger.info("Paper execution engine initialized", pair=self.pair_name)

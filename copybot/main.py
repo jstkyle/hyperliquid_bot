@@ -159,6 +159,35 @@ async def run_pair(
                 paper_equity=str(paper_equity),
             )
 
+        # Seed paper trader with leader's existing positions as baseline
+        # so the bot only copies NEW changes, not pre-existing positions
+        if config.is_paper and isinstance(execution, PaperExecutionEngine):
+            if leader_state.positions and leader_state.account_value > 0:
+                from copybot.utils.math import compute_target_size
+                follower_eq = execution._paper_equity
+                seeded = {}
+                for coin, pos in leader_state.positions.items():
+                    sz_decimals = metadata.get_sz_decimals(coin)
+                    if sz_decimals is None:
+                        continue
+                    target = compute_target_size(
+                        leader_szi=pos.szi,
+                        leader_equity=leader_state.account_value,
+                        follower_equity=follower_eq,
+                        multiplier=config.scaling.multiplier,
+                        sz_decimals=sz_decimals,
+                    )
+                    if target != 0:
+                        from copybot.state.models import PositionInfo, LeverageInfo
+                        seeded[coin] = PositionInfo(
+                            coin=coin,
+                            szi=target,
+                            entry_px=Decimal("0"),
+                            leverage=LeverageInfo("cross", 1),
+                            unrealized_pnl=Decimal("0"),
+                        )
+                execution.seed_positions(seeded)
+
     except Exception as e:
         logger.error("Failed to fetch initial state", pair=pair_name, error=str(e))
         raise
