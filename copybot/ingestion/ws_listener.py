@@ -7,10 +7,12 @@ import hashlib
 import json
 import random
 import time
+from typing import Callable, Awaitable
 
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from copybot.state.models import LeaderFill
 from copybot.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -19,9 +21,9 @@ logger = get_logger(__name__)
 class WebSocketListener:
     """Maintains a persistent WebSocket connection to Hyperliquid.
 
-    Subscribes to userEvents for a leader address and notifies callbacks
-    when fill events are detected. Handles reconnection with exponential
-    backoff and event deduplication.
+    Subscribes to userEvents for a leader address. When fill events are
+    detected, calls the on_fill callback directly (for immediate copy)
+    AND sets the leader_event flag (for reconciliation backup).
     """
 
     def __init__(
@@ -30,6 +32,7 @@ class WebSocketListener:
         leader_address: str,
         pair_name: str,
         on_leader_event: asyncio.Event,
+        on_fill: Callable[[LeaderFill], Awaitable[None]] | None = None,
         reconnect_delay: float = 1.0,
         max_reconnect_delay: float = 60.0,
         heartbeat_interval: float = 15.0,
@@ -37,7 +40,8 @@ class WebSocketListener:
         self.ws_url = ws_url
         self.leader_address = leader_address
         self.pair_name = pair_name
-        self.on_leader_event = on_leader_event  # Signaled when leader activity detected
+        self.on_leader_event = on_leader_event  # Backup signal for recon loop
+        self.on_fill = on_fill  # Direct fill callback for immediate copy
 
         self._reconnect_delay = reconnect_delay
         self._max_reconnect_delay = max_reconnect_delay
@@ -182,17 +186,31 @@ class WebSocketListener:
         # Check for fills
         fills = event_data.get("fills", [])
         if fills:
-            for fill in fills:
+            ts = time.time()
+            for fill_data in fills:
+                fill = LeaderFill.from_ws(fill_data, ts)
                 logger.info(
                     "Leader fill detected",
                     pair=self.pair_name,
-                    coin=fill.get("coin", "?"),
-                    side=fill.get("side", "?"),
-                    sz=fill.get("sz", "?"),
-                    px=fill.get("px", "?"),
+                    coin=fill.coin,
+                    side=fill.side,
+                    size=str(fill.size),
+                    price=str(fill.price),
                 )
 
-            # Signal the decision engine to wake up
+                # PRIMARY PATH: Copy fill directly
+                if self.on_fill:
+                    try:
+                        await self.on_fill(fill)
+                    except Exception as e:
+                        logger.error(
+                            "Fill copy callback failed",
+                            pair=self.pair_name,
+                            coin=fill.coin,
+                            error=str(e),
+                        )
+
+            # BACKUP: Signal reconciliation loop
             self.on_leader_event.set()
             return
 

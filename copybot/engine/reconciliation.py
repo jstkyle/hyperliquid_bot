@@ -48,6 +48,7 @@ class ReconciliationLoop:
         leader_event: asyncio.Event,
         alerter: DiscordAlerter | None = None,
         controller: BotController | None = None,
+        fill_copier=None,
     ):
         self.config = config
         self.pair_config = pair_config
@@ -60,6 +61,7 @@ class ReconciliationLoop:
         self.leader_event = leader_event
         self.alerter = alerter
         self.controller = controller
+        self.fill_copier = fill_copier
         self._running = False
 
     async def start(self) -> None:
@@ -151,6 +153,12 @@ class ReconciliationLoop:
         # 3. Update state store
         self.store.set_leader_state(pair_name, leader_state)
         self.store.set_follower_state(pair_name, follower_state)
+
+        # 3b. Update fill copier equities (so real-time fills use fresh values)
+        if self.fill_copier:
+            self.fill_copier.update_equities(
+                leader_state.account_value, follower_state.account_value
+            )
 
         # 4. Get session PnL for risk checks
         session_pnl = self.store.get_session_pnl(pair_name)

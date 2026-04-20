@@ -14,6 +14,7 @@ from copybot.controller import BotController
 from copybot.discord_bot import start_discord_bot
 from copybot.engine.decision import DecisionEngine
 from copybot.engine.execution import ExecutionEngine
+from copybot.engine.fill_copier import FillCopier
 from copybot.engine.paper_trader import PaperExecutionEngine
 from copybot.engine.reconciliation import ReconciliationLoop
 from copybot.engine.risk import RiskController
@@ -49,19 +50,8 @@ async def run_pair(
     # --- Create components ---
     poller = RestPoller(config.api_url)
 
-    # Leader event signal (WS → reconciliation)
+    # Leader event signal (WS → reconciliation backup)
     leader_event = asyncio.Event()
-
-    # WebSocket listener
-    ws_listener = WebSocketListener(
-        ws_url=config.ws_url,
-        leader_address=pair_config.leader_address,
-        pair_name=pair_name,
-        on_leader_event=leader_event,
-        reconnect_delay=config.websocket.reconnect_delay_s,
-        max_reconnect_delay=config.websocket.max_reconnect_delay_s,
-        heartbeat_interval=config.websocket.heartbeat_interval_s,
-    )
 
     # Decision engine
     decision = DecisionEngine(config, metadata)
@@ -77,7 +67,30 @@ async def run_pair(
 
     await execution.initialize()
 
-    # Reconciliation loop
+    # Fill copier — PRIMARY execution path (direct copy of leader fills)
+    fill_copier = FillCopier(
+        config=config,
+        pair_config=pair_config,
+        metadata=metadata,
+        execution_engine=execution,
+        store=store,
+        alerter=alerter,
+        controller=controller,
+    )
+
+    # WebSocket listener (sends fills to fill_copier directly)
+    ws_listener = WebSocketListener(
+        ws_url=config.ws_url,
+        leader_address=pair_config.leader_address,
+        pair_name=pair_name,
+        on_leader_event=leader_event,
+        on_fill=fill_copier.copy_fill,
+        reconnect_delay=config.websocket.reconnect_delay_s,
+        max_reconnect_delay=config.websocket.max_reconnect_delay_s,
+        heartbeat_interval=config.websocket.heartbeat_interval_s,
+    )
+
+    # Reconciliation loop (BACKUP — catches missed WS events)
     recon = ReconciliationLoop(
         config=config,
         pair_config=pair_config,
@@ -90,6 +103,7 @@ async def run_pair(
         leader_event=leader_event,
         alerter=alerter,
         controller=controller,
+        fill_copier=fill_copier,
     )
 
     # Register with controller for Discord commands
@@ -187,6 +201,20 @@ async def run_pair(
                             unrealized_pnl=Decimal("0"),
                         )
                 execution.seed_positions(seeded)
+
+        # Initialize fill copier with current equities
+        follower_eq = (
+            execution._paper_equity
+            if config.is_paper and isinstance(execution, PaperExecutionEngine)
+            else (follower_state.account_value if pair_config.follower_address else config.scaling.paper_equity)
+        )
+        fill_copier.update_equities(leader_state.account_value, follower_eq)
+        logger.info(
+            "Fill copier initialized",
+            pair=pair_name,
+            leader_equity=str(leader_state.account_value),
+            follower_equity=str(follower_eq),
+        )
 
     except Exception as e:
         logger.error("Failed to fetch initial state", pair=pair_name, error=str(e))

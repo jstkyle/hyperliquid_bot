@@ -121,6 +121,31 @@ class AccountState:
 
 
 @dataclass
+class LeaderFill:
+    """A single fill event from the leader's WebSocket stream."""
+
+    coin: str
+    side: str  # "Buy" or "Sell" (as Hyperliquid sends it)
+    size: Decimal  # Absolute size filled
+    price: Decimal
+    timestamp: float
+
+    @property
+    def is_buy(self) -> bool:
+        return self.side in ("Buy", "B")
+
+    @classmethod
+    def from_ws(cls, data: dict[str, Any], ts: float) -> LeaderFill:
+        return cls(
+            coin=data.get("coin", ""),
+            side=data.get("side", ""),
+            size=Decimal(str(data.get("sz", "0"))),
+            price=Decimal(str(data.get("px", "0"))),
+            timestamp=ts,
+        )
+
+
+@dataclass
 class OrderIntent:
     """A planned order to be executed."""
 
