@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import signal
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 from copybot.config.loader import BotConfig, PairConfig, load_config
@@ -144,7 +145,6 @@ async def run_pair(
         elif config.is_paper and isinstance(execution, PaperExecutionEngine):
             # No follower address set — use simulated equity
             from copybot.state.models import AccountState
-            from decimal import Decimal
             paper_equity = config.scaling.paper_equity
             follower_state = AccountState(
                 address="paper_wallet",
