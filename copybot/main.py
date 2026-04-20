@@ -324,6 +324,10 @@ def main():
     )
     args = parser.parse_args()
 
+    # Load .env file (secrets, no manual export needed)
+    from dotenv import load_dotenv
+    load_dotenv()
+
     # Load config
     config = load_config(args.config)
     if args.mode:
