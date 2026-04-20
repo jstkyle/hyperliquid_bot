@@ -165,3 +165,16 @@ class PaperExecutionEngine:
                 coin: str(pos.szi) for coin, pos in self._paper_positions.items()
             },
         }
+
+    def get_account_state(self) -> AccountState:
+        """Return virtual positions as an AccountState for reconciliation.
+
+        This prevents the reconciliation loop from fetching real (empty)
+        state from the API and re-opening positions every cycle.
+        """
+        return AccountState(
+            address=self.follower_address or "paper_wallet",
+            account_value=self._paper_equity,
+            positions=dict(self._paper_positions),
+            timestamp=time.time(),
+        )

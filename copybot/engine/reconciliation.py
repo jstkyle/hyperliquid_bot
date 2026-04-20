@@ -123,26 +123,28 @@ class ReconciliationLoop:
         # 1. Refresh metadata if stale
         await self.metadata.ensure_fresh()
 
-        # 2. Fetch fresh state from REST API
+        # 2. Fetch fresh state
         leader_state = await self.poller.fetch_clearinghouse_state(
             self.pair_config.leader_address
         )
 
-        if self.pair_config.follower_address:
+        # In paper mode, use the paper trader's virtual positions
+        # (NOT the real API, which would always show 0 positions)
+        from copybot.engine.paper_trader import PaperExecutionEngine
+        if self.config.is_paper and isinstance(self.execution, PaperExecutionEngine):
+            follower_state = self.execution.get_account_state()
+        elif self.pair_config.follower_address:
             follower_state = await self.poller.fetch_clearinghouse_state(
                 self.pair_config.follower_address
             )
         else:
-            # Paper mode without follower address — use stored state
-            follower_state = self.store.get_follower_state(pair_name)
-            if follower_state is None:
-                from copybot.state.models import AccountState
-                follower_state = AccountState(
-                    address="paper_wallet",
-                    account_value=self.config.scaling.paper_equity,
-                )
+            from copybot.state.models import AccountState
+            follower_state = AccountState(
+                address="paper_wallet",
+                account_value=self.config.scaling.paper_equity,
+            )
 
-        # In paper mode, ensure follower equity is never $0 (use paper_equity)
+        # In paper mode, ensure follower equity is never $0
         if self.config.is_paper and follower_state.account_value <= 0:
             follower_state.account_value = self.config.scaling.paper_equity
 
