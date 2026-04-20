@@ -127,15 +127,21 @@ class DecisionEngine:
             )
             return []
 
-        # Check drift threshold (skip tiny adjustments during reconciliation)
-        if not force and target != 0:
+        # Check drift threshold (skip tiny adjustments)
+        # force=True uses a lower threshold but NEVER skips entirely
+        if target != 0:
             drift_pct = abs_delta / abs(target)
-            if drift_pct < self.config.scaling.drift_threshold_pct:
+            threshold = self.config.scaling.drift_threshold_pct
+            if force:
+                # Even forced reconciliation ignores sub-0.5% drifts
+                threshold = min(threshold, Decimal("0.005"))
+            if drift_pct < threshold:
                 logger.debug(
                     "Drift below threshold, skipping",
                     coin=coin,
                     drift_pct=f"{drift_pct:.4f}",
-                    threshold=str(self.config.scaling.drift_threshold_pct),
+                    threshold=str(threshold),
+                    forced=force,
                 )
                 return []
 

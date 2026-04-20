@@ -90,9 +90,7 @@ class WebSocketListener:
             )
             await asyncio.sleep(wait)
             delay = min(delay * 2, self._max_reconnect_delay)
-
-            # Signal leader event so reconciliation runs after reconnect
-            self.on_leader_event.set()
+            # Don't trigger leader_event on reconnect — wait for real fills
 
     async def stop(self) -> None:
         """Stop the listener gracefully."""
