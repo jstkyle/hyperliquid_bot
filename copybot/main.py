@@ -84,6 +84,7 @@ async def run_pair(
         execution_engine=execution,
         store=store,
         leader_event=leader_event,
+        alerter=alerter,
     )
 
     # --- Fetch initial state ---

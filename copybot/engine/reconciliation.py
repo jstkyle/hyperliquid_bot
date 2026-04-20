@@ -12,6 +12,7 @@ from copybot.ingestion.rest_poller import RestPoller
 from copybot.state.metadata import MetadataCache
 from copybot.state.models import OrderStatus
 from copybot.state.store import StateStore
+from copybot.utils.alerting import DiscordAlerter
 from copybot.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,6 +42,7 @@ class ReconciliationLoop:
         execution_engine,  # ExecutionEngine or PaperExecutionEngine
         store: StateStore,
         leader_event: asyncio.Event,
+        alerter: DiscordAlerter | None = None,
     ):
         self.config = config
         self.pair_config = pair_config
@@ -51,6 +53,7 @@ class ReconciliationLoop:
         self.execution = execution_engine
         self.store = store
         self.leader_event = leader_event
+        self.alerter = alerter
         self._running = False
 
     async def start(self) -> None:
@@ -208,6 +211,19 @@ class ReconciliationLoop:
                     filled_size=str(result.filled_size),
                     filled_price=str(result.filled_price),
                 )
+                # Discord notification
+                if self.alerter:
+                    side = "BUY" if result.intent.is_buy else "SELL"
+                    prefix = "📝 PAPER" if self.config.is_paper else "💰 LIVE"
+                    await self.alerter.send(
+                        title=f"{prefix} | {side} {result.intent.coin}",
+                        message=(
+                            f"**Size:** {result.filled_size}\n"
+                            f"**Price:** ${result.filled_price}\n"
+                            f"**Target Position:** {result.intent.target_size}"
+                        ),
+                        color=0x00FF00 if result.intent.is_buy else 0xFF6600,
+                    )
             elif result.status == OrderStatus.PARTIAL:
                 self.risk.record_success()  # Partial is not a failure
                 executed += 1
