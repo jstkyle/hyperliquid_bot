@@ -65,6 +65,9 @@ class WebSocketListener:
         while self._running:
             try:
                 await self._connect_and_listen()
+                # If we reach here, connection was established and then dropped.
+                # Reset delay on any successful connection.
+                delay = self._reconnect_delay
             except ConnectionClosed as e:
                 logger.warning(
                     "WebSocket connection closed",
@@ -106,10 +109,13 @@ class WebSocketListener:
         """Establish connection, subscribe, and process messages."""
         logger.info("WebSocket connecting", pair=self.pair_name, url=self.ws_url)
 
+        # Disable protocol-level pings — Hyperliquid uses application-level
+        # ping/pong messages ({"method":"ping"} → channel:"pong").
+        # Protocol-level pings cause the connection to drop when HL ignores them.
         async with websockets.connect(
             self.ws_url,
-            ping_interval=self._heartbeat_interval,
-            ping_timeout=self._heartbeat_interval * 2,
+            ping_interval=None,
+            ping_timeout=None,
             close_timeout=5,
         ) as ws:
             self._ws = ws
@@ -130,14 +136,33 @@ class WebSocketListener:
                 leader=self.leader_address[:10] + "...",
             )
 
-            # Reset reconnect delay on successful connection
-            delay = self._reconnect_delay
+            # Start application-level heartbeat task
+            heartbeat_task = asyncio.create_task(
+                self._heartbeat_loop(ws), name=f"{self.pair_name}_ws_heartbeat"
+            )
 
-            # Listen for messages
-            async for raw_msg in ws:
-                if not self._running:
-                    break
-                await self._handle_message(raw_msg)
+            try:
+                # Listen for messages
+                async for raw_msg in ws:
+                    if not self._running:
+                        break
+                    await self._handle_message(raw_msg)
+            finally:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
+
+    async def _heartbeat_loop(self, ws) -> None:
+        """Send application-level ping messages to keep the connection alive."""
+        while True:
+            await asyncio.sleep(self._heartbeat_interval)
+            try:
+                await ws.send(json.dumps({"method": "ping"}))
+                logger.debug("Sent heartbeat ping", pair=self.pair_name)
+            except Exception:
+                break  # Connection lost — let the main loop handle reconnect
 
     async def _handle_message(self, raw_msg: str | bytes) -> None:
         """Parse and handle a WebSocket message."""
