@@ -42,11 +42,37 @@ class DecisionEngine:
             List of OrderIntents to be passed through risk controller and executed.
         """
         if leader_state.account_value <= 0:
-            logger.critical(
-                "Leader equity is zero or negative — skipping all copies",
-                leader_equity=str(leader_state.account_value),
-            )
-            return []
+            # Leader has no equity — they likely closed everything.
+            # If follower still has open positions, close them all.
+            if follower_state.positions:
+                logger.warning(
+                    "Leader equity is zero — closing all follower positions to mirror",
+                    leader_equity=str(leader_state.account_value),
+                    follower_positions=list(follower_state.positions.keys()),
+                )
+                close_intents: list[OrderIntent] = []
+                for coin, pos in follower_state.positions.items():
+                    close_intents.append(
+                        OrderIntent(
+                            coin=coin,
+                            delta=-pos.szi,
+                            is_buy=(pos.szi < 0),  # buy to close short, sell to close long
+                            is_reduce_only=True,
+                            target_size=Decimal("0"),
+                        )
+                    )
+                    logger.info(
+                        "Queued close for orphaned position",
+                        coin=coin,
+                        size=str(pos.szi),
+                    )
+                return close_intents
+            else:
+                logger.info(
+                    "Leader equity is zero and follower has no positions — nothing to do",
+                    leader_equity=str(leader_state.account_value),
+                )
+                return []
 
         if follower_state.account_value <= 0:
             logger.warning(

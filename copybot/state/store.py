@@ -86,10 +86,30 @@ class StateStore:
                 error TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS copy_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pair_name TEXT NOT NULL,
+                source TEXT NOT NULL,
+                coin TEXT NOT NULL,
+                leader_side TEXT NOT NULL,
+                leader_size TEXT NOT NULL,
+                leader_price TEXT,
+                leader_timestamp REAL NOT NULL,
+                follower_side TEXT NOT NULL,
+                follower_size TEXT NOT NULL,
+                follower_price TEXT,
+                follower_timestamp REAL NOT NULL,
+                follower_status TEXT NOT NULL,
+                latency_ms REAL,
+                error TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_snapshot_pair_role
                 ON state_snapshot(pair_name, role);
             CREATE INDEX IF NOT EXISTS idx_order_pair_time
                 ON order_log(pair_name, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_copy_history_pair_time
+                ON copy_history(pair_name, follower_timestamp);
         """)
         await self._db.commit()
         logger.info("State store initialized", db_path=self.db_path)
@@ -214,3 +234,114 @@ class StateStore:
             (keep_latest,),
         )
         await self._db.commit()
+
+    async def log_copy_event(
+        self,
+        pair_name: str,
+        source: str,
+        coin: str,
+        leader_side: str,
+        leader_size: str,
+        leader_price: str | None,
+        leader_timestamp: float,
+        follower_side: str,
+        follower_size: str,
+        follower_price: str | None,
+        follower_timestamp: float,
+        follower_status: str,
+        error: str | None = None,
+    ) -> None:
+        """Log a copy event with both leader and follower timestamps.
+
+        Args:
+            pair_name: Name of the leader-follower pair.
+            source: 'fill' (real-time WebSocket) or 'recon' (reconciliation loop).
+            coin: The traded coin.
+            leader_side: Leader's trade side (buy/sell).
+            leader_size: Leader's trade size.
+            leader_price: Leader's trade price.
+            leader_timestamp: When the leader's fill occurred (epoch seconds).
+            follower_side: Follower's trade side (buy/sell).
+            follower_size: Follower's trade size.
+            follower_price: Follower's fill price.
+            follower_timestamp: When the follower's order was filled (epoch seconds).
+            follower_status: Order status (filled, failed, etc.).
+            error: Error message if the copy failed.
+        """
+        if not self._db:
+            return
+
+        latency_ms = (follower_timestamp - leader_timestamp) * 1000
+
+        await self._db.execute(
+            """INSERT INTO copy_history
+               (pair_name, source, coin, leader_side, leader_size, leader_price,
+                leader_timestamp, follower_side, follower_size, follower_price,
+                follower_timestamp, follower_status, latency_ms, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                pair_name,
+                source,
+                coin,
+                leader_side,
+                leader_size,
+                leader_price,
+                leader_timestamp,
+                follower_side,
+                follower_size,
+                follower_price,
+                follower_timestamp,
+                follower_status,
+                latency_ms,
+                error,
+            ),
+        )
+        await self._db.commit()
+
+    async def get_copy_history(
+        self, pair_name: str | None = None, limit: int = 20
+    ) -> list[dict]:
+        """Fetch recent copy history entries.
+
+        Returns:
+            List of dicts with leader/follower timestamps and trade details.
+        """
+        if not self._db:
+            return []
+
+        query = """SELECT pair_name, source, coin,
+                          leader_side, leader_size, leader_price, leader_timestamp,
+                          follower_side, follower_size, follower_price, follower_timestamp,
+                          follower_status, latency_ms, error
+                   FROM copy_history"""
+        params: list = []
+
+        if pair_name:
+            query += " WHERE pair_name = ?"
+            params.append(pair_name)
+
+        query += " ORDER BY follower_timestamp DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "pair_name": row[0],
+                "source": row[1],
+                "coin": row[2],
+                "leader_side": row[3],
+                "leader_size": row[4],
+                "leader_price": row[5],
+                "leader_timestamp": row[6],
+                "follower_side": row[7],
+                "follower_size": row[8],
+                "follower_price": row[9],
+                "follower_timestamp": row[10],
+                "follower_status": row[11],
+                "latency_ms": row[12],
+                "error": row[13],
+            }
+            for row in rows
+        ]

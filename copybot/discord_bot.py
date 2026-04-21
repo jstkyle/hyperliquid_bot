@@ -248,6 +248,83 @@ class CopyBotDiscord(discord.Client):
 
             await interaction.response.send_message(embed=embed)
 
+        # --- HISTORY ---
+        @self.tree.command(name="history", description="Show copy history: leader vs follower side-by-side")
+        @app_commands.describe(count="Number of entries to show (max 15)")
+        async def cmd_history(interaction: discord.Interaction, count: int = 10):
+            if not self._check_auth(interaction) or not self._check_channel(interaction):
+                return await interaction.response.send_message("⛔ Not authorized.", ephemeral=True)
+
+            count = min(count, 15)
+            history = await self.controller.get_copy_history(limit=count)
+
+            if not history:
+                return await interaction.response.send_message("📊 No copy history recorded yet.")
+
+            embeds = []
+            for entry in history:
+                # Format timestamps to human-readable with milliseconds
+                leader_dt = datetime.fromtimestamp(entry["leader_timestamp"], tz=timezone.utc)
+                follower_dt = datetime.fromtimestamp(entry["follower_timestamp"], tz=timezone.utc)
+                leader_ts_str = leader_dt.strftime("%m/%d %H:%M:%S.") + f"{leader_dt.microsecond // 1000:03d}"
+                follower_ts_str = follower_dt.strftime("%m/%d %H:%M:%S.") + f"{follower_dt.microsecond // 1000:03d}"
+
+                latency = entry["latency_ms"]
+                latency_str = f"{latency:,.0f}ms" if latency is not None else "N/A"
+                if latency is not None and latency < 1000:
+                    latency_color = "🟢"  # fast
+                elif latency is not None and latency < 5000:
+                    latency_color = "🟡"  # moderate
+                else:
+                    latency_color = "🔴"  # slow
+
+                source_icon = "⚡" if entry["source"] == "fill" else "🔄"
+                status_icon = "✅" if entry["follower_status"] == "filled" else "❌"
+                side_emoji = "🟢" if entry["leader_side"] == "buy" else "🔴"
+                l_side = entry["leader_side"].upper()
+                f_side = entry["follower_side"].upper()
+
+                embed_entry = discord.Embed(
+                    title=f"{side_emoji} {entry['coin']} — {source_icon} {entry['source'].upper()}",
+                    color=0x3498DB if entry["follower_status"] == "filled" else 0xE74C3C,
+                )
+                embed_entry.add_field(
+                    name="👤 Leader",
+                    value=(
+                        f"**{l_side}** {entry['leader_size']}\n"
+                        f"@ ${entry['leader_price']}\n"
+                        f"🕐 `{leader_ts_str}`"
+                    ),
+                    inline=True,
+                )
+                embed_entry.add_field(
+                    name=f"{status_icon} Follower",
+                    value=(
+                        f"**{f_side}** {entry['follower_size']}\n"
+                        f"@ ${entry['follower_price']}\n"
+                        f"🕐 `{follower_ts_str}`"
+                    ),
+                    inline=True,
+                )
+                embed_entry.add_field(
+                    name=f"{latency_color} Latency",
+                    value=latency_str,
+                    inline=True,
+                )
+
+                if entry.get("error"):
+                    embed_entry.set_footer(text=f"❌ {entry['error'][:80]}")
+
+                embeds.append(embed_entry)
+
+            # Discord allows max 10 embeds per message
+            for i in range(0, len(embeds), 10):
+                batch = embeds[i:i + 10]
+                if i == 0:
+                    await interaction.response.send_message(embeds=batch)
+                else:
+                    await interaction.followup.send(embeds=batch)
+
         # --- PAUSE ---
         @self.tree.command(name="pause", description="Pause all trading (keeps monitoring)")
         async def cmd_pause(interaction: discord.Interaction):
@@ -359,7 +436,8 @@ class CopyBotDiscord(discord.Client):
                     "`/balance` — Leader & follower equity\n"
                     "`/positions` — Open positions side by side\n"
                     "`/pnl` — Session profit/loss\n"
-                    "`/trades` — Recent trade history"
+                    "`/trades` — Recent trade history\n"
+                    "`/history` — Copy history: leader vs follower timestamps"
                 ),
                 "🎮 Control": (
                     "`/pause` — Pause all trading\n"

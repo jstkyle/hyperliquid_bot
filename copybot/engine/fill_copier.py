@@ -197,6 +197,23 @@ class FillCopier:
         # Persist to database
         await self.store.log_order(self.pair_name, result)
 
+        # Persist copy history for side-by-side comparison
+        await self.store.log_copy_event(
+            pair_name=self.pair_name,
+            source="fill",
+            coin=fill.coin,
+            leader_side=fill.side.lower() if fill.side else "unknown",
+            leader_size=str(fill.size),
+            leader_price=str(fill.price),
+            leader_timestamp=fill.timestamp,
+            follower_side="buy" if fill.is_buy else "sell",
+            follower_size=str(result.filled_size),
+            follower_price=str(result.filled_price),
+            follower_timestamp=result.timestamp or time.time(),
+            follower_status=result.status.value,
+            error=result.error,
+        )
+
         return result
 
     @property

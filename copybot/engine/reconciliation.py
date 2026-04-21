@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from decimal import Decimal
 
 from copybot.config.loader import BotConfig, PairConfig
@@ -125,8 +126,9 @@ class ReconciliationLoop:
         # 1. Refresh metadata if stale
         await self.metadata.ensure_fresh()
 
-        # 2. Fetch fresh state
-        leader_state = await self.poller.fetch_clearinghouse_state(
+        # 2. Fetch fresh state (perp + spot balance for accurate equity)
+        detection_ts = time.time()  # When we "detected" leader state (for history)
+        leader_state = await self.poller.fetch_full_account_state(
             self.pair_config.leader_address
         )
 
@@ -269,6 +271,26 @@ class ReconciliationLoop:
 
             # Log to database
             await self.store.log_order(pair_name, result)
+
+            # Log copy history (recon-driven trade)
+            follower_side = "buy" if result.intent.is_buy else "sell"
+            # For recon, leader "action" is the detected position; price from mid
+            leader_price = str(mid_prices.get(result.intent.coin, 0))
+            await self.store.log_copy_event(
+                pair_name=pair_name,
+                source="recon",
+                coin=result.intent.coin,
+                leader_side=follower_side,  # recon mirrors; same direction
+                leader_size=str(result.intent.abs_delta),
+                leader_price=leader_price,
+                leader_timestamp=detection_ts,
+                follower_side=follower_side,
+                follower_size=str(result.filled_size),
+                follower_price=str(result.filled_price),
+                follower_timestamp=result.timestamp or time.time(),
+                follower_status=result.status.value,
+                error=result.error,
+            )
 
         logger.info(
             "Reconciliation cycle complete",

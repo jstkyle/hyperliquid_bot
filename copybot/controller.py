@@ -269,3 +269,9 @@ class BotController:
                 "status": row[5],
             })
         return trades
+
+    async def get_copy_history(self, pair_name: str | None = None, limit: int = 20) -> list[dict]:
+        """Fetch copy history with leader/follower side-by-side timestamps."""
+        if not self._store:
+            return []
+        return await self._store.get_copy_history(pair_name=pair_name, limit=limit)

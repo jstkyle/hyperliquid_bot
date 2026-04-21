@@ -126,7 +126,7 @@ async def run_pair(
     )
 
     try:
-        leader_state = await poller.fetch_clearinghouse_state(pair_config.leader_address)
+        leader_state = await poller.fetch_full_account_state(pair_config.leader_address)
         store.set_leader_state(pair_name, leader_state)
         logger.info(
             "Leader state loaded",
