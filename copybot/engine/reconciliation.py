@@ -243,11 +243,11 @@ class ReconciliationLoop:
                     side = "BUY" if result.intent.is_buy else "SELL"
                     prefix = "📝 PAPER" if self.config.is_paper else "💰 LIVE"
                     await self.alerter.send(
-                        title=f"{prefix} | {side} {result.intent.coin}",
+                        title=f"{prefix} 🔄 Auto-Sync | {side} {result.intent.coin}",
                         message=(
-                            f"**Size:** {result.filled_size}\n"
-                            f"**Price:** ${result.filled_price}\n"
-                            f"**Target Position:** {result.intent.target_size}"
+                            f"> Correcting position drift to match leader\n\n"
+                            f"**Rebalance Trade:** `{result.filled_size}` @ `${result.filled_price}`\n"
+                            f"**New Total Position:** `{result.intent.target_size}` {result.intent.coin}"
                         ),
                         color=0x00FF00 if result.intent.is_buy else 0xFF6600,
                     )

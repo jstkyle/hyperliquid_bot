@@ -159,11 +159,12 @@ class FillCopier:
                 side = "BUY" if fill.is_buy else "SELL"
                 prefix = "📝 PAPER" if self.config.is_paper else "💰 LIVE"
                 await self.alerter.send(
-                    title=f"{prefix} | {side} {fill.coin}",
+                    title=f"{prefix} ⚡ Instant Copy | {side} {fill.coin}",
                     message=(
-                        f"**Leader filled:** {fill.size} @ ${fill.price}\n"
-                        f"**We copied:** {result.filled_size} @ ${result.filled_price}\n"
-                        f"**Scale:** {scale_factor:.2%}"
+                        f"> Catching live trade directly from leader\n\n"
+                        f"**Leader's Trade:** `{fill.size}` @ `${fill.price}`\n"
+                        f"**Our Execution:** `{result.filled_size}` @ `${result.filled_price}`\n"
+                        f"**Proportion:** `{scale_factor:.2%}`"
                     ),
                     color=0x00FF00 if fill.is_buy else 0xFF6600,
                 )
